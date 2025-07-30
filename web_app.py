@@ -192,23 +192,39 @@ def index():
             background: #5a6268;
         }
         
+        .detail-list-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
         .detail-item {
             background: #f8f9fa;
-            padding: 20px;
-            margin-bottom: 15px;
+            padding: 15px;
             border-radius: 8px;
-            border-left: 4px solid #007bff;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+        
+        .detail-item:hover {
+            background: #e9ecef;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
         
         .detail-item h3 {
             color: #007bff;
-            margin-bottom: 10px;
-            font-size: 18px;
+            margin-bottom: 8px;
+            font-size: 16px;
         }
         
         .detail-item p {
-            margin: 5px 0;
+            margin: 3px 0;
             color: #666;
+            font-size: 14px;
         }
         
         .probability {
@@ -390,15 +406,17 @@ def index():
                 content.innerHTML = `
                     <h2>${mapAlias}</h2>
                     <h3>怪物刷新信息：</h3>
-                    ${monsters.map(monster => `
-                        <div class="detail-item" data-monster="${monster.name}" onclick="showMonsterDetail(this.dataset.monster)">
-                            <h3>${monster.name}</h3>
-                            <p>坐标: (${monster.x}, ${monster.y})</p>
-                            <p>范围: ${monster.range}</p>
-                            <p>数量: ${monster.count}</p>
-                            <p>刷新时间: ${monster.refresh_time} 分钟</p>
-                        </div>
-                    `).join('')}
+                    <div class="detail-list-container">
+                        ${monsters.map(monster => `
+                            <div class="detail-item" data-monster="${monster.name}" onclick="jumpToMonsterDetail(this.dataset.monster)">
+                                <h3>${monster.name}</h3>
+                                <p>坐标: (${monster.x}, ${monster.y})</p>
+                                <p>范围: ${monster.range}</p>
+                                <p>数量: ${monster.count}</p>
+                                <p>刷新时间: ${monster.refresh_time} 分钟</p>
+                            </div>
+                        `).join('')}
+                    </div>
                 `;
             } catch (error) {
                 document.getElementById('mapDetailContent').innerHTML = '<div class="error">加载失败</div>';
@@ -457,22 +475,26 @@ def index():
                     <h2>${monsterName}</h2>
                     
                     <h3>爆出物品：</h3>
-                    ${data.items.map(item => `
-                        <div class="detail-item" data-item="${item.name}" onclick="showItemDetail(this.dataset.item)">
-                            <h3>${item.name} <span class="probability">${item.probability}</span></h3>
-                        </div>
-                    `).join('')}
+                    <div class="detail-list-container">
+                        ${data.items.map(item => `
+                            <div class="detail-item" data-item="${item.name}" onclick="jumpToItemDetail(this.dataset.item)">
+                                <h3>${item.name} <span class="probability">${item.probability}</span></h3>
+                            </div>
+                        `).join('')}
+                    </div>
                     
                     <h3>出现地图：</h3>
-                    ${data.maps.map(map => `
-                        <div class="detail-item">
-                            <h3>${map.map_alias}</h3>
-                            <p>坐标: (${map.x}, ${map.y})</p>
-                            <p>范围: ${map.range}</p>
-                            <p>数量: ${map.count}</p>
-                            <p>刷新时间: ${map.refresh_time} 分钟</p>
-                        </div>
-                    `).join('')}
+                    <div class="detail-list-container">
+                        ${data.maps.map(map => `
+                            <div class="detail-item" data-map="${map.map_name}" onclick="jumpToMapDetail(this.dataset.map)">
+                                <h3>${map.map_alias}</h3>
+                                <p>坐标: (${map.x}, ${map.y})</p>
+                                <p>范围: ${map.range}</p>
+                                <p>数量: ${map.count}</p>
+                                <p>刷新时间: ${map.refresh_time} 分钟</p>
+                            </div>
+                        `).join('')}
+                    </div>
                 `;
             } catch (error) {
                 console.error('显示怪物详情失败:', error);
@@ -532,11 +554,13 @@ def index():
                     <h2>${itemName}</h2>
                     
                     <h3>爆出怪物：</h3>
-                    ${data.monsters.map(monster => `
-                        <div class="detail-item" data-monster="${monster.name}" onclick="showMonsterDetail(this.dataset.monster)">
-                            <h3>${monster.name} <span class="probability">${monster.probability}</span></h3>
-                        </div>
-                    `).join('')}
+                    <div class="detail-list-container">
+                        ${data.monsters.map(monster => `
+                            <div class="detail-item" data-monster="${monster.name}" onclick="jumpToMonsterDetail(this.dataset.monster)">
+                                <h3>${monster.name} <span class="probability">${monster.probability}</span></h3>
+                            </div>
+                        `).join('')}
+                    </div>
                 `;
             } catch (error) {
                 console.error('显示物品详情失败:', error);
@@ -548,6 +572,126 @@ def index():
         function showItemList() {
             document.getElementById('itemList').style.display = 'grid';
             document.getElementById('itemDetail').style.display = 'none';
+        }
+        
+        // 跳转到怪物详情（跨标签页）
+        async function jumpToMonsterDetail(monsterName) {
+            // 切换到怪物查询标签页
+            switchTab('monsters');
+            
+            // 等待标签页切换完成后再显示详情
+            setTimeout(async () => {
+                try {
+                    const response = await fetch(`/api/monster/${encodeURIComponent(monsterName)}`);
+                    const data = await response.json();
+                    
+                    document.getElementById('monsterList').style.display = 'none';
+                    document.getElementById('monsterDetail').style.display = 'block';
+                    
+                    const content = document.getElementById('monsterDetailContent');
+                    content.innerHTML = `
+                        <h2>${monsterName}</h2>
+                        
+                        <h3>爆出物品：</h3>
+                        <div class="detail-list-container">
+                            ${data.items.map(item => `
+                                <div class="detail-item" data-item="${item.name}" onclick="jumpToItemDetail(this.dataset.item)">
+                                    <h3>${item.name} <span class="probability">${item.probability}</span></h3>
+                                </div>
+                            `).join('')}
+                        </div>
+                        
+                        <h3>出现地图：</h3>
+                        <div class="detail-list-container">
+                            ${data.maps.map(map => `
+                                <div class="detail-item" data-map="${map.map_name}" onclick="jumpToMapDetail(this.dataset.map)">
+                                    <h3>${map.map_alias}</h3>
+                                    <p>坐标: (${map.x}, ${map.y})</p>
+                                    <p>范围: ${map.range}</p>
+                                    <p>数量: ${map.count}</p>
+                                    <p>刷新时间: ${map.refresh_time} 分钟</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } catch (error) {
+                    console.error('跳转到怪物详情失败:', error);
+                    document.getElementById('monsterDetailContent').innerHTML = '<div class="error">加载失败</div>';
+                }
+            }, 100);
+        }
+        
+        // 跳转到物品详情（跨标签页）
+        async function jumpToItemDetail(itemName) {
+            // 切换到物品查询标签页
+            switchTab('items');
+            
+            // 等待标签页切换完成后再显示详情
+            setTimeout(async () => {
+                try {
+                    const response = await fetch(`/api/item/${encodeURIComponent(itemName)}`);
+                    const data = await response.json();
+                    
+                    document.getElementById('itemList').style.display = 'none';
+                    document.getElementById('itemDetail').style.display = 'block';
+                    
+                    const content = document.getElementById('itemDetailContent');
+                    content.innerHTML = `
+                        <h2>${itemName}</h2>
+                        
+                        <h3>爆出怪物：</h3>
+                        <div class="detail-list-container">
+                            ${data.monsters.map(monster => `
+                                <div class="detail-item" data-monster="${monster.name}" onclick="jumpToMonsterDetail(this.dataset.monster)">
+                                    <h3>${monster.name} <span class="probability">${monster.probability}</span></h3>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } catch (error) {
+                    console.error('跳转到物品详情失败:', error);
+                    document.getElementById('itemDetailContent').innerHTML = '<div class="error">加载失败</div>';
+                }
+            }, 100);
+        }
+        
+        // 跳转到地图详情（跨标签页）
+        async function jumpToMapDetail(mapName) {
+            // 切换到地图查询标签页
+            switchTab('maps');
+            
+            // 等待标签页切换完成后再显示详情
+            setTimeout(async () => {
+                try {
+                    const response = await fetch(`/api/map/${encodeURIComponent(mapName)}`);
+                    const data = await response.json();
+                    const monsters = data.monsters;
+                    const mapAlias = data.map_alias;
+                    
+                    document.getElementById('mapList').style.display = 'none';
+                    document.getElementById('mapDetail').style.display = 'block';
+                    
+                    const content = document.getElementById('mapDetailContent');
+                    content.innerHTML = `
+                        <h2>${mapAlias}</h2>
+                        <h3>怪物刷新信息：</h3>
+                        <div class="detail-list-container">
+                            ${monsters.map(monster => `
+                                <div class="detail-item" data-monster="${monster.name}" onclick="jumpToMonsterDetail(this.dataset.monster)">
+                                    <h3>${monster.name}</h3>
+                                    <p>坐标: (${monster.x}, ${monster.y})</p>
+                                    <p>范围: ${monster.range}</p>
+                                    <p>数量: ${monster.count}</p>
+                                    <p>刷新时间: ${monster.refresh_time} 分钟</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } catch (error) {
+                    console.error('跳转到地图详情失败:', error);
+                    document.getElementById('mapDetailContent').innerHTML = '<div class="error">加载失败</div>';
+                }
+            }, 100);
         }
         
         // 页面加载时加载地图数据

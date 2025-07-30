@@ -14,7 +14,8 @@ class GameDataManager:
         self.mon_items_dir = os.path.join(self.server_root_dir, "Mir200", "Envir", "MonItems")
         self.mon_gen_file = os.path.join(self.server_root_dir, "Mir200", "Envir", "MonGen.txt")
         self.map_info_file = os.path.join(self.server_root_dir, "Mir200", "Envir", "MapInfo.txt")
-        self.sqlite_dll = os.path.join(self.server_root_dir, "Mir200", "sqlite3.dll")
+        # 检测当前程序目录下的sqlite3.dll
+        self.sqlite_dll = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sqlite3.dll")
         self.map_aliases = {}  # 存储地图名到别称的映射
     
     def get_local_ip(self):
@@ -301,11 +302,11 @@ class GameDataManager:
                 i += 1
                 continue
             
-            # 检查是否是#CALL格式
-            if line.startswith('#CALL'):
+            # 检查是否是#CALL格式（大小写不敏感）
+            if line.upper().startswith('#CALL'):
                 i = self._parse_call_block(conn, cursor, monster_name, lines, i)
-            # 检查是否是#CHILD格式
-            elif line.startswith('#CHILD'):
+            # 检查是否是#CHILD格式（大小写不敏感）
+            elif line.upper().startswith('#CHILD'):
                 i = self._parse_child_block(conn, cursor, monster_name, lines, i)
             else:
                 # 解析传统格式: "1/10 祈祷之刃"
@@ -435,7 +436,7 @@ class GameDataManager:
                     elif line.startswith(';') or not line:  # 注释或空行
                         i += 1
                         continue
-                    elif line.startswith('#CHILD'):  # CHILD块
+                    elif line.upper().startswith('#CHILD'):  # CHILD块（大小写不敏感）
                         i = self._parse_child_block(conn, cursor, monster_name, lines, i)
                         continue
                     else:
@@ -481,10 +482,10 @@ class GameDataManager:
         
         # 解析子爆率
         child_rate = child_parts[1]
-        # 检查是否有RANDOM参数，忽略后面的参数
+        # 检查是否有RANDOM参数，忽略后面的参数（大小写不敏感）
         is_random = False
         for i in range(2, len(child_parts)):
-            if child_parts[i] == 'RANDOM':
+            if child_parts[i].upper() == 'RANDOM':
                 is_random = True
                 break
         
@@ -513,7 +514,7 @@ class GameDataManager:
             elif line.startswith(';') or not line:  # 注释或空行
                 i += 1
                 continue
-            elif line.startswith('#CHILD'):  # 嵌套的CHILD块
+            elif line.upper().startswith('#CHILD'):  # 嵌套的CHILD块（大小写不敏感）
                 i = self._parse_child_block(conn, cursor, monster_name, lines, i)
                 continue
             else:
