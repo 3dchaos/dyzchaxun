@@ -63,6 +63,9 @@ class GameDataManager:
     
     def get_server_name(self):
         """从Config.ini文件读取服务端名字"""
+        if not os.path.exists(self.config_file):
+            return "DefaultServer"
+        
         try:
             with open(self.config_file, 'r', encoding='gbk') as f:
                 content = f.read()
@@ -263,82 +266,297 @@ class GameDataManager:
                 monster_name = filename[:-4]  # 去掉.txt后缀
                 file_path = os.path.join(self.mon_items_dir, filename)
                 
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line or line.startswith(';'):
-                                continue
-                            
-                            # 解析格式: "1/10 祈祷之刃"
-                            parts = line.split()
-                            if len(parts) >= 2:
-                                rate_part = parts[0]
-                                item_name = ' '.join(parts[1:])
-                                
-                                # 解析概率
-                                if '/' in rate_part:
-                                    try:
-                                        numerator, denominator = map(int, rate_part.split('/'))
-                                        probability = f"{numerator}/{denominator}"
-                                        
-                                        # 插入MonItems表
-                                        cursor.execute(f'''
-                                            INSERT INTO {self.monitems_table} (monster_name, item_name, probability, rate_numerator, rate_denominator)
-                                            VALUES (?, ?, ?, ?, ?)
-                                        ''', (monster_name, item_name, probability, numerator, denominator))
-                                        
-                                        # 插入Item表（如果不存在）
-                                        cursor.execute(f'''
-                                            INSERT OR IGNORE INTO {self.item_table} (item_name)
-                                            VALUES (?)
-                                        ''', (item_name,))
-                                        
-                                    except ValueError:
-                                        continue
-                
-                except UnicodeDecodeError:
+                content = None
+                # 尝试多种编码
+                encodings = ['utf-8', 'gbk', 'gb2312', 'utf-8-sig']
+                for encoding in encodings:
                     try:
-                        with open(file_path, 'r', encoding='gbk') as f:
-                            for line in f:
-                                line = line.strip()
-                                if not line or line.startswith(';'):
-                                    continue
-                                
-                                # 解析格式: "1/10 祈祷之刃"
-                                parts = line.split()
-                                if len(parts) >= 2:
-                                    rate_part = parts[0]
-                                    item_name = ' '.join(parts[1:])
-                                    
-                                    # 解析概率
-                                    if '/' in rate_part:
-                                        try:
-                                            numerator, denominator = map(int, rate_part.split('/'))
-                                            probability = f"{numerator}/{denominator}"
-                                            
-                                            # 插入MonItems表
-                                            cursor.execute(f'''
-                                                INSERT INTO {self.monitems_table} (monster_name, item_name, probability, rate_numerator, rate_denominator)
-                                                VALUES (?, ?, ?, ?, ?)
-                                            ''', (monster_name, item_name, probability, numerator, denominator))
-                                            
-                                            # 插入Item表（如果不存在）
-                                            cursor.execute(f'''
-                                                INSERT OR IGNORE INTO {self.item_table} (item_name)
-                                                VALUES (?)
-                                            ''', (item_name,))
-                                            
-                                        except ValueError:
-                                            continue
-                    except:
+                        with open(file_path, 'r', encoding=encoding) as f:
+                            content = f.read()
+                        break
+                    except UnicodeDecodeError:
                         continue
+                    except FileNotFoundError:
+                        print(f"无法找到怪物文件: {file_path}")
+                        break
                 
-                processed_files += 1
+                if content is not None:
+                    self._parse_monster_file_content(conn, cursor, monster_name, content)
+                    processed_files += 1
         
         conn.commit()
         conn.close()
         return f"怪物物品数据解析完成，处理了 {processed_files} 个文件"
+    
+    def _parse_monster_file_content(self, conn, cursor, monster_name, content):
+        """解析怪物文件内容，支持新的#CHILD格式和#CALL格式"""
+        lines = content.split('\n')
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            # 跳过空行和注释
+            if not line or line.startswith(';'):
+                i += 1
+                continue
+            
+            # 检查是否是#CALL格式
+            if line.startswith('#CALL'):
+                i = self._parse_call_block(conn, cursor, monster_name, lines, i)
+            # 检查是否是#CHILD格式
+            elif line.startswith('#CHILD'):
+                i = self._parse_child_block(conn, cursor, monster_name, lines, i)
+            else:
+                # 解析传统格式: "1/10 祈祷之刃"
+                parts = line.split()
+                if len(parts) >= 2:
+                    rate_part = parts[0]
+                    item_name = ' '.join(parts[1:])
+                    
+                    # 解析概率
+                    if '/' in rate_part:
+                        try:
+                            numerator, denominator = map(int, rate_part.split('/'))
+                            probability = f"{numerator}/{denominator}"
+                            
+                            # 插入MonItems表
+                            cursor.execute(f'''
+                                INSERT INTO {self.monitems_table} (monster_name, item_name, probability, rate_numerator, rate_denominator)
+                                VALUES (?, ?, ?, ?, ?)
+                            ''', (monster_name, item_name, probability, numerator, denominator))
+                            
+                            # 插入Item表（如果不存在）
+                            cursor.execute(f'''
+                                INSERT OR IGNORE INTO {self.item_table} (item_name)
+                                VALUES (?)
+                            ''', (item_name,))
+                            
+                        except ValueError:
+                            pass
+            
+            i += 1
+    
+    def _parse_call_block(self, conn, cursor, monster_name, lines, start_index):
+        """解析#CALL块"""
+        # 解析#CALL行
+        call_line = lines[start_index].strip()
+        
+        # 解析格式: #CALL [\\爆率系统\基础爆率.txt] @药水
+        # 或者: #CALL [爆率系统\基础爆率.txt] @药水
+        if '[' in call_line and ']' in call_line:
+            # 提取文件路径
+            start_bracket = call_line.find('[')
+            end_bracket = call_line.find(']')
+            file_path_part = call_line[start_bracket + 1:end_bracket]
+            
+            # 提取标签名
+            tag_part = call_line[end_bracket + 1:].strip()
+            if tag_part.startswith('@'):
+                tag_name = tag_part[1:]  # 去掉@符号
+            else:
+                tag_name = tag_part
+            
+            # 构建完整文件路径
+            if file_path_part.startswith('\\\\'):
+                # 绝对路径格式，去掉开头的\\
+                relative_path = file_path_part[2:]
+            else:
+                # 相对路径格式
+                relative_path = file_path_part
+            
+            # 构建完整路径
+            full_path = os.path.join(self.server_root_dir, "Mir200", "Envir", "QuestDiary", relative_path)
+            
+            print(f"尝试解析外部文件: {full_path}")
+            print(f"查找标签: {tag_name}")
+            
+            # 读取外部爆率文件
+            self._parse_external_drop_file(conn, cursor, monster_name, full_path, tag_name)
+        
+        return start_index + 1
+    
+    def _parse_external_drop_file(self, conn, cursor, monster_name, file_path, tag_name):
+        """解析外部爆率文件"""
+        content = None
+        
+        # 尝试多种编码
+        encodings = ['utf-8', 'gbk', 'gb2312', 'utf-8-sig']
+        for encoding in encodings:
+            try:
+                with open(file_path, 'r', encoding=encoding) as f:
+                    content = f.read()
+                print(f"成功使用 {encoding} 编码读取文件: {file_path}")
+                break
+            except UnicodeDecodeError:
+                continue
+            except FileNotFoundError:
+                print(f"无法找到外部爆率文件: {file_path}")
+                return
+        
+        if content is None:
+            print(f"无法读取外部爆率文件: {file_path}")
+            return
+        
+        # 查找指定标签
+        lines = content.split('\n')
+        i = 0
+        
+        # 先列出文件中所有的标签
+        all_tags = []
+        for line in lines:
+            line = line.strip()
+            if line.startswith('[@') and line.endswith(']'):
+                all_tags.append(line)
+        
+        print(f"文件中找到的标签: {all_tags}")
+        
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            # 查找标签 [@药水] 或 [药水]
+            if line == f"[@{tag_name}]" or line == f"[{tag_name}]":
+                print(f"找到匹配的标签: {line}")
+                # 查找开始大括号
+                i += 1
+                while i < len(lines) and not lines[i].strip().startswith('{'):
+                    i += 1
+                
+                if i >= len(lines):
+                    break
+                
+                # 解析大括号内的内容
+                i += 1  # 跳过开始大括号
+                while i < len(lines):
+                    line = lines[i].strip()
+                    
+                    if line == '}':  # 结束大括号
+                        break
+                    elif line.startswith(';') or not line:  # 注释或空行
+                        i += 1
+                        continue
+                    elif line.startswith('#CHILD'):  # CHILD块
+                        i = self._parse_child_block(conn, cursor, monster_name, lines, i)
+                        continue
+                    else:
+                        # 解析普通物品行
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            rate_part = parts[0]
+                            item_name = ' '.join(parts[1:])
+                            
+                            if '/' in rate_part:
+                                try:
+                                    numerator, denominator = map(int, rate_part.split('/'))
+                                    probability = f"{numerator}/{denominator}"
+                                    
+                                    # 插入MonItems表
+                                    cursor.execute(f'''
+                                        INSERT INTO {self.monitems_table} (monster_name, item_name, probability, rate_numerator, rate_denominator)
+                                        VALUES (?, ?, ?, ?, ?)
+                                    ''', (monster_name, item_name, probability, numerator, denominator))
+                                    
+                                    # 插入Item表（如果不存在）
+                                    cursor.execute(f'''
+                                        INSERT OR IGNORE INTO {self.item_table} (item_name)
+                                        VALUES (?)
+                                    ''', (item_name,))
+                                    
+                                except ValueError:
+                                    pass
+                    
+                    i += 1
+                break
+            
+            i += 1
+    
+    def _parse_child_block(self, conn, cursor, monster_name, lines, start_index):
+        """解析#CHILD块"""
+        # 解析#CHILD行
+        child_line = lines[start_index].strip()
+        child_parts = child_line.split()
+        
+        if len(child_parts) < 2:
+            return start_index + 1
+        
+        # 解析子爆率
+        child_rate = child_parts[1]
+        # 检查是否有RANDOM参数，忽略后面的参数
+        is_random = False
+        for i in range(2, len(child_parts)):
+            if child_parts[i] == 'RANDOM':
+                is_random = True
+                break
+        
+        try:
+            child_numerator, child_denominator = map(int, child_rate.split('/'))
+        except ValueError:
+            return start_index + 1
+        
+        # 查找开始括号
+        i = start_index + 1
+        while i < len(lines) and not lines[i].strip().startswith('('):
+            i += 1
+        
+        if i >= len(lines):
+            return i
+        
+        # 解析括号内的物品
+        items_in_block = []
+        i += 1  # 跳过开始括号
+        
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            if line == ')':  # 结束括号
+                break
+            elif line.startswith(';') or not line:  # 注释或空行
+                i += 1
+                continue
+            elif line.startswith('#CHILD'):  # 嵌套的CHILD块
+                i = self._parse_child_block(conn, cursor, monster_name, lines, i)
+                continue
+            else:
+                # 解析物品行
+                parts = line.split()
+                if len(parts) >= 2:
+                    rate_part = parts[0]
+                    item_name = ' '.join(parts[1:])
+                    
+                    if '/' in rate_part:
+                        try:
+                            numerator, denominator = map(int, rate_part.split('/'))
+                            
+                            # 计算组合概率
+                            if is_random:
+                                # RANDOM模式：子爆率 * 物品爆率
+                                combined_numerator = child_numerator * numerator
+                                combined_denominator = child_denominator * denominator
+                            else:
+                                # 普通模式：子爆率 * 物品爆率
+                                combined_numerator = child_numerator * numerator
+                                combined_denominator = child_denominator * denominator
+                            
+                            probability = f"{combined_numerator}/{combined_denominator}"
+                            
+                            # 插入MonItems表
+                            cursor.execute(f'''
+                                INSERT INTO {self.monitems_table} (monster_name, item_name, probability, rate_numerator, rate_denominator)
+                                VALUES (?, ?, ?, ?, ?)
+                            ''', (monster_name, item_name, probability, combined_numerator, combined_denominator))
+                            
+                            # 插入Item表（如果不存在）
+                            cursor.execute(f'''
+                                INSERT OR IGNORE INTO {self.item_table} (item_name)
+                                VALUES (?)
+                            ''', (item_name,))
+                            
+                        except ValueError:
+                            pass
+            
+            i += 1
+        
+        return i + 1  # 返回下一个位置
     
     def parse_monster_generation(self):
         """解析怪物刷新数据"""
